@@ -2,6 +2,8 @@
 <html lang="pl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#14181b"><title>BikeGuard</title>
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="BikeGuard"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
 :root{--bg:#fff;--ink:#14181b;--card:#f1f3ee;--ac:#ffd400;--bad:#d62828;--ok:#0a7d4f}
@@ -32,6 +34,7 @@ dialog{border:0;border-radius:18px;background:var(--bg);color:var(--ink);width:9
 
 <div class="panel" id="home">
   <button class="main" id="bStart">ROZPOCZNIJ JAZDĘ</button>
+  <label style="margin-top:10px">Rodzaj drogi<select id="prof"><option value="bike">🚲 Rowerowa</option><option value="foot">🚶 Piesza</option><option value="car">🚗 Samochodowa</option></select></label>
   <div class="row"><button id="bFind">ZNAJDŹ MIEJSCE</button><button id="bNav">NAWIGUJ DO…</button></div>
   <div class="row"><button id="bVoice">🎤 Polecenie głosowe</button><button id="bSet">⚙ Ustawienia</button></div>
   <div id="list"></div>
@@ -48,7 +51,6 @@ dialog{border:0;border-radius:18px;background:var(--bg);color:var(--ink);width:9
 <label>Rozpoznawane obiekty</label>
 <label><input type="checkbox" data-c="person"> Piesi</label><label><input type="checkbox" data-c="bicycle"> Rowerzyści</label>
 <label><input type="checkbox" data-c="car"> Samochody i motocykle</label><label><input type="checkbox" data-c="light"> Sygnalizacja i STOP</label>
-<label>Preferencje trasy<select id="prof"><option value="routed-bike">Rowerowa</option></select></label>
 <label><input type="checkbox" id="batt"> Tryb oszczędzania baterii (rzadsza analiza)</label>
 <label><input type="checkbox" id="night"> Tryb nocny</label>
 <label>Język komunikatów<select id="lang"><option value="pl-PL">Polski</option></select></label>
@@ -60,17 +62,23 @@ dialog{border:0;border-radius:18px;background:var(--bg);color:var(--ink);width:9
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
 <script>
+// ---- ikona i manifest (aplikacja na ekran początkowy)
+(function(){const c=document.createElement('canvas');c.width=c.height=180;const x=c.getContext('2d');x.fillStyle='#14181b';x.fillRect(0,0,180,180);x.fillStyle='#ffd400';x.font='bold 100px system-ui';x.textAlign='center';x.fillText('BG',90,122);
+const u=c.toDataURL('image/png'),l=document.createElement('link');l.rel='apple-touch-icon';l.href=u;document.head.appendChild(l);
+const m={name:'BikeGuard',short_name:'BikeGuard',start_url:location.href.split('#')[0],display:'standalone',background_color:'#14181b',theme_color:'#14181b',icons:[{src:u,sizes:'180x180',type:'image/png'}]};
+const k=document.createElement('link');k.rel='manifest';k.href=URL.createObjectURL(new Blob([JSON.stringify(m)],{type:'application/manifest+json'}));document.head.appendChild(k)})();
 const $=id=>document.getElementById(id);
-const def={sens:.5,mode:'both',vol:1,batt:false,night:false,c:{person:1,bicycle:1,car:1,light:1}};
+const def={sens:.5,mode:'both',vol:1,batt:false,night:false,prof:'bike',c:{person:1,bicycle:1,car:1,light:1}};
 let S=Object.assign({},def,JSON.parse(localStorage.bg||'{}'));
 const save=()=>localStorage.bg=JSON.stringify(S);
 let pos=null,muted=false,riding=false,model=null,stream=null,route=null,dest=null,idx=1,said=-1,lastRt=0,wake=null,marker,line,destM;
 const map=L.map('map',{zoomControl:false}).setView([52.23,21.01],13);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
-function applyUI(){document.body.classList.toggle('night',S.night);$('sens').value=S.sens;$('mode').value=S.mode;$('vol').value=S.vol;$('batt').checked=S.batt;$('night').checked=S.night;
+function applyUI(){document.body.classList.toggle('night',S.night);$('sens').value=S.sens;$('mode').value=S.mode;$('vol').value=S.vol;$('batt').checked=S.batt;$('night').checked=S.night;$('prof').value=S.prof||'bike';
 document.querySelectorAll('[data-c]').forEach(e=>e.checked=!!S.c[e.dataset.c]);}
 applyUI();
 $('bSet').onclick=()=>dlg.showModal();
+$('prof').onchange=()=>{S.prof=$('prof').value;save();if(dest&&pos)navTo(dest)};
 dlg.addEventListener('change',()=>{S.sens=+$('sens').value;S.mode=$('mode').value;S.vol=+$('vol').value;S.batt=$('batt').checked;S.night=$('night').checked;
 document.querySelectorAll('[data-c]').forEach(e=>S.c[e.dataset.c]=e.checked?1:0);save();applyUI()});
 $('bHome').onclick=()=>{if(pos){localStorage.home=JSON.stringify(pos);say('Zapisano dom')}else say('Brak GPS')};
@@ -130,8 +138,9 @@ try{const r=await fetch('https://nominatim.openstreetmap.org/search?format=json&
 // ---- nawigacja
 const MOD={left:'w lewo','slight left':'lekko w lewo','sharp left':'ostro w lewo',right:'w prawo','slight right':'lekko w prawo','sharp right':'ostro w prawo',straight:'prosto',uturn:'zawróć'};
 const instr=s=>{const m=s.maneuver;return m.type=='arrive'?'Jesteś u celu':m.type.includes('roundabout')||m.type=='rotary'?'Wjedź na rondo':'Skręć '+(MOD[m.modifier]||'prosto')};
-async function navTo(p,n){if(!pos)return say('Brak lokalizacji GPS');dest=p;
-try{const r=await fetch(`https://routing.openstreetmap.de/routed-bike/route/v1/bike/${pos.lng},${pos.lat};${p.lng},${p.lat}?overview=full&geometries=geojson&steps=true`);const j=await r.json();if(!j.routes||!j.routes[0])return say('Nie znaleziono trasy');
+const PROF={bike:['routed-bike','bike'],foot:['routed-foot','foot'],car:['routed-car','driving']};
+async function navTo(p,n){if(!pos)return say('Brak lokalizacji GPS');dest=p;const pf=PROF[S.prof]||PROF.bike;
+try{const r=await fetch(`https://routing.openstreetmap.de/${pf[0]}/route/v1/${pf[1]}/${pos.lng},${pos.lat};${p.lng},${p.lat}?overview=full&geometries=geojson&steps=true`);const j=await r.json();if(!j.routes||!j.routes[0])return say('Nie znaleziono trasy');
 route=j.routes[0];idx=1;said=-1;line&&line.remove();destM&&destM.remove();
 const pts=route.geometry.coordinates.map(c=>[c[1],c[0]]);line=L.polyline(pts,{color:'#0a58ca',weight:7}).addTo(map);destM=L.marker([p.lat,p.lng]).addTo(map);map.fitBounds(line.getBounds());
 say('Trasa do '+(p.name||n||'celu')+', '+(route.distance/1000).toFixed(1).replace('.',',')+' kilometra');$('home').style.display='none';document.body.classList.add('riding');if(!riding)start();navTick()}catch(e){say('Błąd wyznaczania trasy')}}
@@ -153,3 +162,4 @@ else geocode(t.replace(/^(nawiguj|prowadź|zaprowadź mnie)( do)?/,''))};r.start
 $('bVoice').onclick=$('bVoice2').onclick=listen;
 gps();
 </script></body></html>
+
