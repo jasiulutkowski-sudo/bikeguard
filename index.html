@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="pl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#14181b"><title>BikeGuard</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root{--bg:#fff;--ink:#14181b;--card:#f1f3ee;--ac:#ffd400;--bad:#d62828;--ok:#0a7d4f}
+body.night{--bg:#14181b;--ink:#f4f4ef;--card:#232a2f}
+*{box-sizing:border-box}html,body{height:100%;margin:0;font:600 17px system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+#map{position:fixed;inset:0;z-index:0}
+.top{position:fixed;top:0;left:0;right:0;z-index:5;padding:calc(env(safe-area-inset-top) + 8px) 10px 6px;display:flex;gap:6px;flex-wrap:wrap}
+.pill{background:var(--card);color:var(--ink);border-radius:20px;padding:5px 11px;font-size:14px}
+.pill.ok{background:var(--ok);color:#fff}.pill.bad{background:var(--bad);color:#fff}
+.panel{position:fixed;left:0;right:0;bottom:0;z-index:5;background:var(--bg);padding:12px 12px calc(env(safe-area-inset-bottom) + 12px);border-radius:20px 20px 0 0;box-shadow:0 -4px 20px #0004;max-height:65vh;overflow:auto}
+button{font:inherit;border:0;border-radius:14px;padding:16px;background:var(--card);color:var(--ink);width:100%;min-height:56px}
+button.main{background:var(--ac);color:#14181b;font-weight:800;font-size:22px;min-height:76px}
+button.stop{background:var(--bad);color:#fff}
+.row{display:flex;gap:8px;margin-top:8px}.row>*{flex:1}
+#hud{display:none}.riding #hud{display:block}.riding #home{display:none}
+#maneuver{font-size:26px;font-weight:800}#eta{font-size:14px;opacity:.8;margin-top:4px}
+#warn{position:fixed;left:10px;right:10px;top:calc(env(safe-area-inset-top) + 52px);z-index:6;background:var(--bad);color:#fff;border-radius:16px;padding:16px;font-size:24px;font-weight:800;text-align:center;display:none}
+#cam{position:fixed;right:10px;top:calc(env(safe-area-inset-top) + 48px);width:30vw;max-width:150px;border-radius:12px;z-index:4;display:none;background:#000}
+.riding #cam{display:block}
+.item{background:var(--card);border-radius:14px;padding:12px;margin-top:8px}.item small{display:block;font-weight:500;opacity:.8}
+label{display:block;margin-top:12px}select,input[type=range]{width:100%;font:inherit;padding:8px}
+dialog{border:0;border-radius:18px;background:var(--bg);color:var(--ink);width:92vw;max-height:85vh}
+.hide{display:none}
+</style></head><body>
+<div id="map"></div>
+<div class="top"><span class="pill" id="sGps">GPS: —</span><span class="pill" id="sCam">Kamera: —</span><span class="pill" id="sAi">Ostrzeganie: —</span><span class="pill" id="sMute">🔊</span></div>
+<div id="warn"></div><video id="cam" playsinline muted autoplay></video>
+
+<div class="panel" id="home">
+  <button class="main" id="bStart">ROZPOCZNIJ JAZDĘ</button>
+  <div class="row"><button id="bFind">ZNAJDŹ MIEJSCE</button><button id="bNav">NAWIGUJ DO…</button></div>
+  <div class="row"><button id="bVoice">🎤 Polecenie głosowe</button><button id="bSet">⚙ Ustawienia</button></div>
+  <div id="list"></div>
+</div>
+<div class="panel" id="hud">
+  <div id="maneuver">Jedź prosto</div><div id="eta"></div>
+  <div class="row"><button id="bVoice2">🎤</button><button id="bMute">Wycisz</button><button class="stop" id="bStop">ZAKOŃCZ</button></div>
+</div>
+
+<dialog id="dlg"><h3>Ustawienia</h3>
+<label>Czułość wykrywania<select id="sens"><option value="0.6">Niska</option><option value="0.5">Średnia</option><option value="0.4">Wysoka</option></select></label>
+<label>Alarmy<select id="mode"><option value="both">Dźwięk + głos</option><option value="beep">Tylko dźwięk</option><option value="voice">Tylko głos</option></select></label>
+<label>Głośność<input type="range" id="vol" min="0.2" max="1" step="0.1"></label>
+<label>Rozpoznawane obiekty</label>
+<label><input type="checkbox" data-c="person"> Piesi</label><label><input type="checkbox" data-c="bicycle"> Rowerzyści</label>
+<label><input type="checkbox" data-c="car"> Samochody i motocykle</label><label><input type="checkbox" data-c="light"> Sygnalizacja i STOP</label>
+<label>Preferencje trasy<select id="prof"><option value="routed-bike">Rowerowa</option></select></label>
+<label><input type="checkbox" id="batt"> Tryb oszczędzania baterii (rzadsza analiza)</label>
+<label><input type="checkbox" id="night"> Tryb nocny</label>
+<label>Język komunikatów<select id="lang"><option value="pl-PL">Polski</option></select></label>
+<div class="row"><button id="bHome">Ustaw dom w tym miejscu</button><button id="bClear">Usuń dane</button></div>
+<div class="row"><button class="main" onclick="dlg.close()" style="min-height:56px;font-size:18px">Gotowe</button></div>
+<p style="font-size:13px;opacity:.8">BikeGuard wspiera uwagę, nie zastępuje obserwacji drogi. Obraz z kamery jest analizowany tylko na telefonie i nigdzie nie jest zapisywany ani wysyłany.</p></dialog>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const def={sens:.5,mode:'both',vol:1,batt:false,night:false,c:{person:1,bicycle:1,car:1,light:1}};
+let S=Object.assign({},def,JSON.parse(localStorage.bg||'{}'));
+const save=()=>localStorage.bg=JSON.stringify(S);
+let pos=null,muted=false,riding=false,model=null,stream=null,route=null,dest=null,idx=1,said=-1,lastRt=0,wake=null,marker,line,destM;
+const map=L.map('map',{zoomControl:false}).setView([52.23,21.01],13);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+function applyUI(){document.body.classList.toggle('night',S.night);$('sens').value=S.sens;$('mode').value=S.mode;$('vol').value=S.vol;$('batt').checked=S.batt;$('night').checked=S.night;
+document.querySelectorAll('[data-c]').forEach(e=>e.checked=!!S.c[e.dataset.c]);}
+applyUI();
+$('bSet').onclick=()=>dlg.showModal();
+dlg.addEventListener('change',()=>{S.sens=+$('sens').value;S.mode=$('mode').value;S.vol=+$('vol').value;S.batt=$('batt').checked;S.night=$('night').checked;
+document.querySelectorAll('[data-c]').forEach(e=>S.c[e.dataset.c]=e.checked?1:0);save();applyUI()});
+$('bHome').onclick=()=>{if(pos){localStorage.home=JSON.stringify(pos);say('Zapisano dom')}else say('Brak GPS')};
+$('bClear').onclick=()=>{localStorage.clear();S=Object.assign({},def);applyUI();say('Dane usunięte')};
+const setP=(id,t,c)=>{const e=$(id);e.textContent=t;e.className='pill '+(c||'')};
+// ---- dźwięk i głos
+let ac;function beep(){if(!ac)ac=new (window.AudioContext||window.webkitAudioContext)();[0,.18].forEach(t=>{const o=ac.createOscillator(),g=ac.createGain();o.frequency.value=1000;g.gain.value=.4*S.vol;o.connect(g);g.connect(ac.destination);o.start(ac.currentTime+t);o.stop(ac.currentTime+t+.12)})}
+function say(t,force){if(muted&&!force)return;try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang='pl-PL';u.volume=S.vol;speechSynthesis.speak(u)}catch(e){}}
+function alertUser(t){const w=$('warn');w.textContent=t;w.style.display='block';clearTimeout(w.t);w.t=setTimeout(()=>w.style.display='none',2500);
+if(muted)return;if(S.mode!='voice')beep();if(S.mode!='beep')setTimeout(()=>say(t),S.mode=='both'?450:0)}
+$('bMute').onclick=$('sMute').onclick=()=>{muted=!muted;$('sMute').textContent=muted?'🔇':'🔊';$('bMute').textContent=muted?'Włącz dźwięk':'Wycisz'};
+// ---- GPS
+function gps(){if(!navigator.geolocation)return setP('sGps','GPS: brak','bad');
+navigator.geolocation.watchPosition(p=>{pos={lat:p.coords.latitude,lng:p.coords.longitude};setP('sGps','GPS: OK','ok');
+if(!marker){marker=L.circleMarker(pos,{radius:9,color:'#14181b',fillColor:'#ffd400',fillOpacity:1}).addTo(map);map.setView(pos,16)}else marker.setLatLng(pos);
+if(riding){map.panTo(pos);navTick()}},()=>setP('sGps','GPS: brak zgody','bad'),{enableHighAccuracy:true,maximumAge:1000})}
+const hav=(a,b)=>{const R=6371e3,r=Math.PI/180,x=(b.lng-a.lng)*r*Math.cos((a.lat+b.lat)/2*r),y=(b.lat-a.lat)*r;return Math.hypot(x,y)*R};
+// ---- wizja komputerowa
+const MAP={person:['person','Pieszy na drodze'],bicycle:['bicycle','Uwaga, rowerzysta przed Tobą'],car:['car','Uwaga, samochód'],truck:['car','Uwaga, samochód'],bus:['car','Uwaga, autobus'],motorcycle:['car','Uwaga, motocykl'],'traffic light':['light','Sygnalizacja świetlna'],'stop sign':['light','Znak STOP']};
+const prev={},lastA={};
+async function loop(){if(!riding)return;
+try{const v=$('cam'),preds=await model.detect(v,8,S.sens),now=performance.now(),W=v.videoWidth,H=v.videoHeight;let best=null;
+for(const p of preds){const m=MAP[p.class];if(!m||!S.c[m[0]]||p.score<S.sens)continue;
+const f=p.bbox[3]/H,cx=(p.bbox[0]+p.bbox[2]/2)/W,pr=prev[p.class];let g=0;if(pr&&now-pr.t<1200)g=(f-pr.f)/((now-pr.t)/1000);prev[p.class]={f,t:now};
+const inPath=cx>.25&&cx<.75,light=m[0]=='light';let risk=0;
+if(!light){if(inPath&&(f>.55||(g>.25&&f>.2)))risk=3;else if(inPath&&f>.3)risk=2;else if(g>.3&&f>.15)risk=1}
+else if(f>.25&&p.class=='stop sign')risk=1;
+if(risk&&(!best||risk>best.risk))best={risk,txt:m[1]+(light||inPath?'':(cx<.5?' z lewej strony':' z prawej strony')),k:p.class}}
+if(best){const cd=[0,10000,5000,2000][best.risk];if(!lastA[best.k]||now-lastA[best.k]>cd){lastA[best.k]=now;alertUser(best.risk==3?'Zwolnij, możliwe zagrożenie! '+best.txt:best.txt)}}
+setP('sAi','Ostrzeganie: aktywne','ok')}catch(e){setP('sAi','Ostrzeganie: błąd','bad')}
+setTimeout(loop,S.batt?600:150)}
+async function start(){riding=true;document.body.classList.add('riding');
+try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:640,height:480},audio:false});$('cam').srcObject=stream;setP('sCam','Kamera: OK','ok')}catch(e){setP('sCam','Kamera: brak zgody','bad');alertUser('Brak dostępu do kamery');}
+try{wake=await navigator.wakeLock.request('screen')}catch(e){}
+if(stream){if(!model){setP('sAi','Ostrzeganie: ładuję model…');model=await cocoSsd.load({base:'lite_mobilenet_v2'})}loop()}
+say('Jazda rozpoczęta. Patrz na drogę.')}
+function stop(){riding=false;document.body.classList.remove('riding');stream&&stream.getTracks().forEach(t=>t.stop());wake&&wake.release();setP('sCam','Kamera: —');setP('sAi','Ostrzeganie: —');$('warn').style.display='none'}
+$('bStart').onclick=start;$('bStop').onclick=stop;
+// ---- miejsca
+const CAT={spozywcz:['sklep spożywczy','["shop"~"supermarket|convenience|greengrocer"]'],rower:['sklep rowerowy','["shop"="bicycle"]'],stacj:['stacja benzynowa','["amenity"="fuel"]'],apt:['apteka','["amenity"="pharmacy"]'],woda:['miejsce z wodą','["shop"~"supermarket|convenience|kiosk"]'],sklep:['sklep','["shop"]']};
+function openNow(oh){if(!oh)return null;if(oh.trim()=='24/7')return true;const D=['Mo','Tu','We','Th','Fr','Sa','Su'],n=new Date(),d=(n.getDay()+6)%7,m=n.getHours()*60+n.getMinutes();let res=null;
+for(const part of oh.split(';')){const r=part.trim().match(/^([A-Za-z,\-]+)?\s*(\d\d:\d\d-\d\d:\d\d(?:\s*,\s*\d\d:\d\d-\d\d:\d\d)*)$/);if(!r)return null;
+let dm=!r[1];if(r[1])for(const t of r[1].split(',')){const [a,b]=t.split('-'),i=D.indexOf(a),j=b?D.indexOf(b):i;if(i<0||j<0)return null;if(i<=j?d>=i&&d<=j:d>=i||d<=j)dm=true}
+if(dm){res=false;for(const s of r[2].split(',')){const [a,b]=s.trim().split('-').map(x=>+x.slice(0,2)*60+ +x.slice(3));if(b>a?m>=a&&m<b:m>=a||m<b)res=true}}}return res}
+async function findPlaces(key){if(!pos){say('Brak lokalizacji GPS');return[]}
+const [name,q]=CAT[key];$('list').innerHTML='<div class="item">Szukam: '+name+'…</div>';
+try{const r=await fetch('https://overpass-api.de/api/interpreter?data='+encodeURIComponent(`[out:json][timeout:15];nwr(around:2500,${pos.lat},${pos.lng})${q};out center tags 60;`));
+const j=await r.json();const out=j.elements.map(e=>{const c=e.center||e;return{name:e.tags.name||name,lat:c.lat,lng:c.lon,d:hav(pos,{lat:c.lat,lng:c.lon}),open:openNow(e.tags.opening_hours)}}).sort((a,b)=>(b.open===true)-(a.open===true)||a.d-b.d).slice(0,8);
+$('list').innerHTML=out.length?'':'<div class="item">Nic nie znaleziono w promieniu 2,5 km.</div>';
+out.forEach(p=>{const d=document.createElement('div');d.className='item';d.innerHTML=`<b>${p.name.replace(/</g,'&lt;')}</b><small>${Math.round(p.d)} m · ${p.open===true?'✅ otwarte':p.open===false?'⛔ zamknięte':'❓ godziny niepotwierdzone'}</small>`;d.onclick=()=>navTo(p);$('list').appendChild(d)});return out}
+catch(e){$('list').innerHTML='<div class="item">Nie udało się pobrać miejsc (brak internetu lub limit usługi).</div>';return[]}}
+function pickCat(t){t=t.toLowerCase();return/rower/.test(t)?'rower':/stacj|paliw|benzyn/.test(t)?'stacj':/apte/.test(t)?'apt':/wod|pić|pic/.test(t)?'woda':/spoż|spoz|jedzen/.test(t)?'spozywcz':'sklep'}
+$('bFind').onclick=()=>{$('list').innerHTML='';[['sklep','Najbliższy sklep'],['spozywcz','Sklep spożywczy'],['rower','Sklep rowerowy'],['stacj','Stacja benzynowa'],['apt','Apteka'],['woda','Woda']].forEach(([k,l])=>{const b=document.createElement('button');b.textContent=l;b.style.marginTop='8px';b.onclick=()=>findPlaces(k);$('list').appendChild(b)})};
+$('bNav').onclick=()=>{const q=prompt('Dokąd? (adres lub miejsce, np. "Rynek Główny Kraków", albo "dom")');q&&geocode(q)};
+async function geocode(q){if(/dom/i.test(q)&&localStorage.home)return navTo(JSON.parse(localStorage.home),'dom');
+try{const r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(q));const j=await r.json();if(!j[0])return say('Nie znaleziono celu');navTo({lat:+j[0].lat,lng:+j[0].lon,name:q})}catch(e){say('Błąd wyszukiwania')}}
+// ---- nawigacja
+const MOD={left:'w lewo','slight left':'lekko w lewo','sharp left':'ostro w lewo',right:'w prawo','slight right':'lekko w prawo','sharp right':'ostro w prawo',straight:'prosto',uturn:'zawróć'};
+const instr=s=>{const m=s.maneuver;return m.type=='arrive'?'Jesteś u celu':m.type.includes('roundabout')||m.type=='rotary'?'Wjedź na rondo':'Skręć '+(MOD[m.modifier]||'prosto')};
+async function navTo(p,n){if(!pos)return say('Brak lokalizacji GPS');dest=p;
+try{const r=await fetch(`https://routing.openstreetmap.de/routed-bike/route/v1/bike/${pos.lng},${pos.lat};${p.lng},${p.lat}?overview=full&geometries=geojson&steps=true`);const j=await r.json();if(!j.routes||!j.routes[0])return say('Nie znaleziono trasy');
+route=j.routes[0];idx=1;said=-1;line&&line.remove();destM&&destM.remove();
+const pts=route.geometry.coordinates.map(c=>[c[1],c[0]]);line=L.polyline(pts,{color:'#0a58ca',weight:7}).addTo(map);destM=L.marker([p.lat,p.lng]).addTo(map);map.fitBounds(line.getBounds());
+say('Trasa do '+(p.name||n||'celu')+', '+(route.distance/1000).toFixed(1).replace('.',',')+' kilometra');$('home').style.display='none';document.body.classList.add('riding');if(!riding)start();navTick()}catch(e){say('Błąd wyznaczania trasy')}}
+function navTick(){if(!route||!pos)return;const st=route.legs[0].steps;
+const pts=route.geometry.coordinates;let md=1e9;for(let i=0;i<pts.length;i+=2)md=Math.min(md,hav(pos,{lat:pts[i][1],lng:pts[i][0]}));
+if(md>60&&Date.now()-lastRt>15000){lastRt=Date.now();say('Przeliczam trasę');return navTo(dest)}
+while(idx<st.length-1&&hav(pos,{lat:st[idx].maneuver.location[1],lng:st[idx].maneuver.location[0]})<20)idx++;
+const s=st[idx],dd=hav(pos,{lat:s.maneuver.location[1],lng:s.maneuver.location[0]});
+$('maneuver').textContent=instr(s)+' za '+Math.round(dd)+' m';
+let rem=dd;for(let i=idx;i<st.length;i++)rem+=st[i].distance;const sp=route.distance/route.duration;
+$('eta').textContent=(rem/1000).toFixed(1)+' km · ok. '+Math.max(1,Math.round(rem/sp/60))+' min · przyjazd '+new Date(Date.now()+rem/sp*1000).toTimeString().slice(0,5);
+if(dd<80&&said!==idx){said=idx;say(instr(s)+(dd>30?' za '+Math.round(dd/10)*10+' metrów':''))}}
+// ---- polecenia głosowe
+function listen(){const R=window.SpeechRecognition||window.webkitSpeechRecognition;if(!R)return say('Rozpoznawanie mowy niedostępne w tej przeglądarce');
+const r=new R();r.lang='pl-PL';r.onresult=async e=>{const t=e.results[0][0].transcript.toLowerCase();
+if(/dom/.test(t))return geocode('dom');
+if(/znajd|zaprowad|prowad/.test(t)&&/dom/.test(t)===false){const o=await findPlaces(pickCat(t));if(o[0]){say('Prowadzę do: '+o[0].name);navTo(o[0])}else say('Nic nie znalazłem')}
+else geocode(t.replace(/^(nawiguj|prowadź|zaprowadź mnie)( do)?/,''))};r.start()}
+$('bVoice').onclick=$('bVoice2').onclick=listen;
+gps();
+</script></body></html>
