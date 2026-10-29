@@ -179,15 +179,27 @@ x.drawImage(im,W*.076,W*.042,W*.85,W*.85,0,0,180,180);
 document.querySelectorAll('link[rel=apple-touch-icon]').forEach(e=>e.remove());
 const l=document.createElement('link');l.rel='apple-touch-icon';l.href=c.toDataURL('image/png');document.head.appendChild(l)};
 im.src='IMG_2053.jpeg'})();
-(function(){const d=document.createElement('div');d.id='spd';
-d.style.cssText='position:fixed;left:10px;top:calc(env(safe-area-inset-top) + 160px);z-index:5;background:var(--ac);color:#14181b;border-radius:16px;padding:6px 12px;text-align:center;font-weight:800;box-shadow:0 2px 10px #0006;min-width:78px';
-d.innerHTML='<div id="spdN" style="font-size:34px;line-height:1">—</div><div style="font-size:13px">km/h</div>';document.body.appendChild(d);
-let lp=null,sm=0;
-navigator.geolocation&&navigator.geolocation.watchPosition(p=>{let v=p.coords.speed;
-if(v==null&&lp){const dt=(p.timestamp-lp.t)/1000;if(dt>0)v=hav(lp,{lat:p.coords.latitude,lng:p.coords.longitude})/dt}
-lp={lat:p.coords.latitude,lng:p.coords.longitude,t:p.timestamp};
-if(v==null||v<0){document.getElementById('spdN').textContent='—';return}
-sm=sm*.6+v*.4;const k=sm*3.6;document.getElementById('spdN').textContent=k<1.5?'0':Math.round(k)},
-()=>{},{enableHighAccuracy:true,maximumAge:500})})();
-
-</script></body></html>
+(function(){
+const d=document.createElement('div');d.id='spd';
+d.style.cssText='position:fixed;left:10px;top:calc(env(safe-area-inset-top) + 160px);z-index:5;background:var(--ac);color:#14181b;border-radius:16px;padding:6px 12px;text-align:center;font-weight:800;box-shadow:0 2px 10px #0006;min-width:84px';
+d.innerHTML='<div id="spdN" style="font-size:34px;line-height:1">—</div><div style="font-size:13px">km/h</div><div id="spdA" style="font-size:11px;font-weight:600">GPS…</div>';
+document.body.appendChild(d);
+const N=document.getElementById('spdN'),A=document.getElementById('spdA'),buf=[],vs=[];let sm=null;
+navigator.geolocation&&navigator.geolocation.watchPosition(p=>{
+const c=p.coords,acc=c.accuracy,t=p.timestamp;
+A.textContent='GPS ±'+Math.round(acc)+' m';
+if(acc>30){N.textContent='—';return}
+const pt={lat:c.latitude,lng:c.longitude,t};buf.push(pt);
+while(buf.length>2&&t-buf[0].t>4000)buf.shift();
+let v=null;
+if(c.speed!=null&&c.speed>=0)v=c.speed;
+else if(buf.length>1){const a=buf[0],dt=(t-a.t)/1000;if(dt>=1.5){const dist=hav(a,pt);v=dist<Math.max(acc,6)?0:dist/dt}}
+if(v==null)return;
+vs.push(v);if(vs.length>5)vs.shift();
+const med=[...vs].sort((a,b)=>a-b)[vs.length>>1];
+sm=sm==null?med:sm*.5+med*.5;
+const k=sm*3.6;
+N.textContent=k<2?'0':k<10?k.toFixed(1):Math.round(k)},
+()=>{N.textContent='—'},{enableHighAccuracy:true,maximumAge:0,timeout:10000});
+})();
+ </script></body></html>
